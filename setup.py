@@ -8,5 +8,6 @@ setup(
         "absl-py",
         "wandb",
         "moviepy==1.0.3",
+        "huggingface-hub",
     ],
 )

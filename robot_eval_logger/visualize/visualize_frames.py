@@ -1,4 +1,5 @@
 from collections import deque
+from typing import Tuple
 
 import cv2
 import moviepy.editor as mpy
@@ -15,15 +16,25 @@ class FrameVisualizer:
 
     def __init__(
         self,
-        episode_viz_frame_interval=10,
-        success_viz_every_n=10,
-        periodic_log_initial_and_final_frames=True,
+        video_fps: int = 10,
+        video_frame_size: Tuple[int, int] = (128, 128),
+        episode_viz_frame_interval: int = 10,
+        periodic_log_initial_and_final_frames: bool = True,
+        success_viz_every_n: int = 10,
     ):
         """
         Args:
+            video_fps (int): fps of the video
+            video_frame_size (Tuple[int, int]): frame size of the video
             episode_viz_frame_interval (int): create a sequence of frames,
                 spaced by every n frames, to visualize an eval trajectory
+            periodic_log_initial_and_final_frames (bool): whether to log the 
+                initial and final frames of the trajectory along with success predictions
+            success_viz_every_n (int): log every n frames for periodic success predictions 
+                if set to True.
         """
+        self.video_fps = video_fps
+        self.video_frame_size = video_frame_size
         self.episode_viz_frame_interval = episode_viz_frame_interval
         self.success_viz_every_n = success_viz_every_n
         self.periodic_log_initial_and_final_frames = (
@@ -62,11 +73,11 @@ class FrameVisualizer:
             to_log[f"{logging_prefix}/frames"] = wandb.Image(combined_frame)
 
             # log low quality video
-            frame_size = (128, 128)
+            frame_size = self.video_frame_size
             tmp_filename = f"/tmp/{logging_prefix}_video.mp4"
             low_quality_frames = [cv2.resize(frame, frame_size) for frame in frames]
             # create the video clip
-            clip = mpy.ImageSequenceClip(low_quality_frames, fps=10)
+            clip = mpy.ImageSequenceClip(low_quality_frames, fps=self.video_fps)
             # write the video with libx264 encoding
             clip.write_videofile(tmp_filename, codec="libx264", preset="ultrafast")
             to_log[f"{logging_prefix}/video"] = wandb.Video(tmp_filename)
