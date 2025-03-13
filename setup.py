@@ -9,5 +9,6 @@ setup(
         "wandb",
         "moviepy==1.0.3",
         "huggingface-hub",
+        "numpy<2.0.0",
     ],
 )

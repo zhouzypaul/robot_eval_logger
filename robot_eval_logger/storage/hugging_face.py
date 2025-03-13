@@ -16,6 +16,12 @@ class HuggingFaceStorage(LocalStorage):
     """
 
     def __init__(self, storage_dir: str, repo_id: str, hf_dir_name: str = "eval_data"):
+        """
+        Args:
+            storage_dir (str): Directory where the data is stored locally
+            repo_id (str): Hugging Face repository ID
+            hf_dir_name (str, optional): Directory name in the Hugging Face repository
+        """
         super().__init__(storage_dir)
         self.repo_id = repo_id
         self.hf_dir_name = hf_dir_name
@@ -38,7 +44,7 @@ class HuggingFaceStorage(LocalStorage):
         self.api.upload_file(
             path_or_fileobj=open(metadata_path, "rb"),
             path_in_repo=os.path.join(
-                self.hf_dir_name, os.path.basename(metadata_path)
+                self.hf_dir_name, os.path.relpath(metadata_path, self.storage_dir)
             ),
             repo_id=self.repo_id,
             repo_type="dataset",
@@ -80,7 +86,9 @@ class HuggingFaceStorage(LocalStorage):
 
         self.api.upload_file(
             path_or_fileobj=open(traj_path, "rb"),
-            path_in_repo=os.path.join(self.hf_dir_name, os.path.basename(traj_path)),
+            path_in_repo=os.path.join(
+                self.hf_dir_name, os.path.relpath(traj_path, self.storage_dir)
+            ),
             repo_id=self.repo_id,
             repo_type="dataset",
             commit_message=f"Upload episode {i_episode}",

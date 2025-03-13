@@ -28,9 +28,9 @@ class FrameVisualizer:
             video_frame_size (Tuple[int, int]): frame size of the video
             episode_viz_frame_interval (int): create a sequence of frames,
                 spaced by every n frames, to visualize an eval trajectory
-            periodic_log_initial_and_final_frames (bool): whether to log the 
+            periodic_log_initial_and_final_frames (bool): whether to log the
                 initial and final frames of the trajectory along with success predictions
-            success_viz_every_n (int): log every n frames for periodic success predictions 
+            success_viz_every_n (int): log every n frames for periodic success predictions
                 if set to True.
         """
         self.video_fps = video_fps
@@ -69,7 +69,11 @@ class FrameVisualizer:
         if len(frames) > 0:
             # log every n frames
             every_n_frames = frames[:: self.episode_viz_frame_interval] + [frames[-1]]
-            combined_frame = cv2.hconcat(every_n_frames)
+            # Resize frames to ensure consistent display and avoid artifacts
+            resized_frames = [
+                cv2.resize(frame, self.video_frame_size) for frame in every_n_frames
+            ]
+            combined_frame = cv2.hconcat(resized_frames)
             to_log[f"{logging_prefix}/frames"] = wandb.Image(combined_frame)
 
             # log low quality video
