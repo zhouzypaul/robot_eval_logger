@@ -7,8 +7,7 @@ import time
 from typing import Dict, List, Optional
 
 from huggingface_hub import HfApi, HfFolder
-from huggingface_hub.utils._errors import RepositoryNotFoundError
-from huggingface_hub.utils._validators import HfHubHTTPError
+from huggingface_hub.errors import HfHubHTTPError, RepositoryNotFoundError
 
 from robot_eval_logger.storage.local import LocalStorage
 from robot_eval_logger.typing import *
