@@ -163,6 +163,7 @@ class EvalLogger:
         logging_prefix,
         episode_success,
         frames_to_log=None,
+        actions=None,
         **kwargs,
     ):
         """log at the end of an eval episode"""
@@ -204,6 +205,7 @@ class EvalLogger:
                 language_command=logging_prefix,
                 obs={"image_primary": frames_to_log},
                 success=episode_success,
+                action=actions,
                 **kwargs,
             )
 

@@ -120,6 +120,8 @@ def main(_):
     def eval_rollout():
         obs, info = env.reset(moving_time=5)
         frames_recorder = []
+        actions_recorder = []
+        proprio_recorder = []
         infos = [info]
 
         for i in range(FLAGS.max_steps):
@@ -129,6 +131,8 @@ def main(_):
             # obs only contains observation for final step of chunk
             obs, reward, done, trunc, info = env.step(actions)
             frames_recorder.append(get_single_img(obs))
+            actions_recorder.append(actions)
+            proprio_recorder.append(obs["proprio"])
             infos.append(info)
 
             eval_logger.log_step()
@@ -145,6 +149,8 @@ def main(_):
         infos = {k: [info[k] for info in infos] for k in infos[0].keys()}
         infos["eval_len"] = eval_len
         infos["frames"] = frames_recorder
+        infos["actions"] = actions_recorder
+        infos["proprio"] = proprio_recorder
 
         return obs, infos, execution_successful
 
@@ -164,6 +170,8 @@ def main(_):
             logging_prefix=language_instruction,
             episode_success=success,
             frames_to_log=eval_infos["frames"],
+            actions=eval_infos["actions"],
+            proprio=eval_infos["proprio"],
             eval_rollout_steps=eval_infos["eval_len"],
             experienced_motor_failure=int(experienced_motor_failure),
         )
