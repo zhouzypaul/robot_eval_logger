@@ -1,0 +1,106 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "robot_eval_logger"
+version = "0.0.1"
+description = "A flexible logger for robot evaluations with visualization and data storage capabilities"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Paul Zhou", email = "zhouzypaul@gmail.com"}
+]
+maintainers = [
+    {name = "Paul Zhou", email = "zhouzypaul@gmail.com"}
+]
+keywords = ["robotics", "evaluation", "logging", "visualization", "wandb", "huggingface"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "absl-py",
+    "wandb",
+    "moviepy==1.0.3",
+    "huggingface-hub",
+    "numpy<2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pre-commit",
+    "black",
+    "flake8",
+    "pytest",
+    "pytest-cov",
+]
+
+[project.urls]
+Homepage = "https://github.com/zhouzypaul/robot_eval_logger"
+Repository = "https://github.com/zhouzypaul/robot_eval_logger"
+Documentation = "https://github.com/zhouzypaul/robot_eval_logger#readme"
+"Bug Tracker" = "https://github.com/zhouzypaul/robot_eval_logger/issues"
+
+[project.scripts]
+robot-eval-logger = "robot_eval_logger.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["robot_eval_logger*"]
+
+[tool.setuptools.package-data]
+"robot_eval_logger" = ["*.py", "*.pyi"]
+
+[tool.black]
+line-length = 88
+target-version = ['py38']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.flake8]
+max-line-length = 88
+extend-ignore = ["E203", "W503"]
+exclude = [
+    ".git",
+    "__pycache__",
+    "build",
+    "dist",
+    "*.egg-info",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--cov=robot_eval_logger",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+]
