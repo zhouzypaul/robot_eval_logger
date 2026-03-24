@@ -65,44 +65,72 @@ eval_logger = EvalLogger(
 )
 ```
 
-You can save the metadata for the evaluation:
+Before an evaluation, you should save the metadata for the current evaluation run.
 ```python
+from robot_eval_logger import ControlMode
+
 eval_logger.save_metadata(
     location="berkeley",
     robot_name="widowx_dummy",
     robot_type="widowx",
+    control_mode=ControlMode.JOINT_POSITION,  # or "joint_velocity", "end_effector"
     evaluator_name="dummy_tester",
-    eval_name="dummy_eval",
+    eval_name="dummy_eval",  # optional
+    action_frequency_hz=10.0,  # required: control / policy command rate (Hz)
 )
 ```
 
-During each environment step, log transition-level data (observations, actions, proprio, etc.). The logger buffers these until the end of the episode.
+### What gets logged
+
+**Per timestep** (`log_step`): multi-camera images (`obs` dict: e.g. base + wrists), joint position, joint velocity, end-effector pose (flat vector), gripper state, commanded action, and optional joint effort/torque.
+
+**Per episode** (`log_episode`): language task string (`logging_prefix`), binary **success**, optional **policy id**, plus any extra **kwargs** (e.g. `partial_success`). **Collection time** (`datetime.now().isoformat()`) and **policy id** are stored on each `TrajData` pickle but are **not** sent to wandb. **Wandb** gets only success-rate metrics, frame visualizations, and kwargs (prefixed with the language string). **Run-level** fields from `save_metadata` stay in `metadata.json` only. Pair `traj_*.pkl` with `metadata.json` in the eval directory when analyzing data.
+
+Run-level context is stored in `metadata.json` via `save_metadata`: location, robot name, robot type, evaluator, eval name, control mode, **action frequency (Hz, required)**, run start time.
+
 ```python
 eval_logger.log_step(
-    obs={"image_primary": image_hwc_uint8},
+    obs={
+        "image_primary": base_cam_hwc_uint8,
+        "image_wrist_left": wrist_l_hwc_uint8,
+        "image_wrist_right": wrist_r_hwc_uint8,
+    },
     action=action_array,
-    proprio=proprio_array,
-    joint_velocity=vel,  # optional
-    joint_effort=effort,  # optional
+    joint_position=joint_pos,
+    joint_velocity=joint_vel,
+    end_effector_pose=ee_pose_seven,  # e.g. xyz + quat; shape is up to you
+    gripper=gripper_array,  # e.g. shape (1,) for width or openness
+    joint_effort=torque,  # optional
 )
-```
 
-After each evaluation episode, log episode-level metrics only. Step data from `log_step` is assembled automatically for storage and frame visualization.
-```python
 eval_logger.log_episode(
     i_episode=i_episode,
     logging_prefix="put the mushroom into the pot",
     episode_success=True,
-    partial_success=0.0,  # optional episode-level kwargs also go here
+    policy_id="pi05_checkpoint_12345",
+    partial_success=0.0,  # kwargs → TrajData + wandb (prefixed by logging_prefix)
 )
+# collection_time is set on TrajData only (not wandb).
 ```
 
 You can also enable periodic evaluation throughput logging (steps per minute) by passing `log_step_stats_interval_minutes` when constructing `EvalLogger`; `log_step()` increments the internal step counters used for that feature.
 
+### Robot types (`RobotType`)
+
+You need to log the robot type for each evaluation run. The current supported robot types are in `robot_eval_logger/typing/eval_metadata.py`:
+
+
+| Member | String value |
+|--------|----------------|
+| `RobotType.FRANKA` | `"franka"` |
+| `RobotType.WIDOWX` | `"widowx"` |
+
+If you are using a different robot, please make sure to add a new member to the `RobotType` enum, and make a Pull Request to this package.
+
 
 ## Example Usage
 
-**Standalone dummy environment (no robot stack)** — `examples/dummy_eval.py` uses a small fake env that streams random images and proprio. Use this to try the logger after `pip install -e .` without any extra packages.
+**Standalone dummy environment (no robot stack)** — `examples/dummy_eval.py` uses a small fake env (multi-camera images, joints, EE pose, gripper). Use it after `pip install -e .` without extra robot packages.
 ```bash
 python examples/dummy_eval.py
 # wandb disabled by default (--debug defaults to True); real logging: --nodebug

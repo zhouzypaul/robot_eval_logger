@@ -1,4 +1,5 @@
 import os
+from typing import Optional, Union
 
 from robot_eval_logger.typing import *
 from robot_eval_logger.utils import make_eval_id_and_timestamp
@@ -32,7 +33,9 @@ class BaseSaver:
         location: str,
         robot_name: str,
         robot_type: str,
-        evaluator_name: str,
+        control_mode: Union[str, ControlMode],
+        action_frequency_hz: float,
+        evaluator_name: Optional[str] = None,
         eval_name: Optional[str] = None,
     ):
         # must make eval_id first
@@ -41,20 +44,5 @@ class BaseSaver:
         # subclasses implement specific logic
         raise NotImplementedError
 
-    def save_episode(
-        self,
-        i_episode: int,
-        language_command: str,
-        obs: Dict[str, np.ndarray],
-        success: bool,
-        action: Optional[List[np.ndarray]] = None,
-        episode_length: Optional[int] = None,
-        eval_duration: Optional[float] = None,
-        proprio: Optional[List[np.ndarray]] = None,
-        velocity: Optional[List[np.ndarray]] = None,
-        effort: Optional[List[np.ndarray]] = None,
-        partial_success: Optional[float] = None,
-        language_feedback: Optional[str] = None,
-        **kwargs,
-    ):
+    def save_episode(self, i_episode: int, traj: TrajData):
         raise NotImplementedError

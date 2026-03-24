@@ -1,7 +1,7 @@
 import time
-from dataclasses import fields
+from datetime import datetime
 from threading import Event, Thread, current_thread
-from typing import Dict, List, Optional
+from typing import Dict, Optional, Union
 
 import numpy as np
 import wandb
@@ -164,33 +164,43 @@ class EvalLogger:
         i_episode,
         logging_prefix,
         episode_success,
+        *,
+        policy_id: Optional[str] = None,
         **kwargs,
     ):
         """Log episode-level metrics at the end of an episode.
 
-        Step-level data (obs, action, proprio, etc.) is automatically collected
-        from prior log_step() calls within this episode.
+        Step-level data is assembled from prior log_step() calls. Run-level
+        fields from :meth:`save_metadata` live in ``metadata.json`` only (not on
+        each ``TrajData`` pickle). Wandb episode metrics use ``kwargs`` only
+        (plus success rates and frame visualizations), not run metadata or
+        ``policy_id`` / ``collection_time``.
 
         Args:
             i_episode: Episode index.
-            logging_prefix: Prefix for logging keys (typically the language command).
-            episode_success: Whether the episode was successful.
-            **kwargs: Episode-level metrics (e.g. partial_success, language_feedback,
-                experienced_motor_failure).
+            logging_prefix: Language task string; also used as wandb key prefix.
+            episode_success: Binary success flag.
+            policy_id: Optional per-run policy identifier (checkpoint, run id, etc.).
+            **kwargs: Additional episode-level fields (e.g. partial_success, eval_duration).
         """
         self.current_episode = i_episode
 
-        # collect accumulated step-level data
-        step_data = self._collect_step_data()
-        frames_to_log = self._extract_frames(step_data)
+        kwargs.pop("collection_time", None)
 
-        # log success rate (before log_frames so frames-with-success visualizes correctly)
+        traj = step_data_sequence_to_traj_data(self._current_episode_steps)
+        frames_to_log = self._extract_frames(traj)
+
+        episode_specific = {
+            "collection_time": datetime.now().isoformat(),
+        }
+        if policy_id is not None:
+            episode_specific["policy_id"] = policy_id
+
         success_stats = self.log_success_rates(
             step=i_episode,
             logging_prefix=logging_prefix,
             episode_success=episode_success,
         )
-        # log frames visualization
         if self.frames_visualizer is not None:
             frames_viz = self.frames_visualizer.log_frames(
                 step=i_episode,
@@ -200,11 +210,9 @@ class EvalLogger:
             )
         else:
             frames_viz = {}
-        # log episode-level kwargs
         others = {f"{logging_prefix}/{k}": v for k, v in kwargs.items()}
         to_log = {**frames_viz, **success_stats, **others}
 
-        # push to wandb
         if self.wandb_logger is not None:
             assert (
                 logging_prefix is not None
@@ -213,18 +221,17 @@ class EvalLogger:
                 wandb.define_metric(f"{k}/*", step_metric="num_episode")
             self.wandb_logger.log({**to_log, "num_episode": i_episode})
 
-        # save the data for this episode
         if self.data_saver:
-            save_data = {
-                **step_data,
+            traj_data = TrajData(
+                **traj.to_dict(),
                 **kwargs,
-                "language_command": logging_prefix,
-                "success": episode_success,
-                "episode_length": len(self._current_episode_steps),
-            }
-            self.data_saver.save_episode(i_episode=i_episode, **save_data)
+                **episode_specific,
+                language_command=logging_prefix,
+                success=episode_success,
+                episode_length=len(self._current_episode_steps),
+            )
+            self.data_saver.save_episode(i_episode=i_episode, traj=traj_data)
 
-        # clear step buffer for next episode
         self._current_episode_steps = []
 
         return to_log
@@ -233,47 +240,30 @@ class EvalLogger:
         self,
         obs: Dict[str, np.ndarray],
         action: np.ndarray,
-        proprio: np.ndarray,
-        joint_velocity: Optional[np.ndarray] = None,
+        joint_position: np.ndarray,
+        joint_velocity: np.ndarray,
+        end_effector_pose: np.ndarray,
+        gripper: np.ndarray,
         joint_effort: Optional[np.ndarray] = None,
     ):
-        """Log transition-level data at the end of an action step."""
+        """Log one transition: multi-camera images, state, and action."""
         self.total_steps += 1
         self.steps_since_last_log += 1
         self._current_episode_steps.append(
             StepData(
                 obs=obs,
                 action=action,
-                proprio=proprio,
+                joint_position=joint_position,
                 joint_velocity=joint_velocity,
+                end_effector_pose=end_effector_pose,
+                gripper=gripper,
                 joint_effort=joint_effort,
             )
         )
 
-    def _collect_step_data(self):
-        """Transpose list of StepData into a dict-of-lists for trajectory storage."""
-        if not self._current_episode_steps:
-            return {}
-        result = {}
-        for field in fields(StepData):
-            values = [getattr(step, field.name) for step in self._current_episode_steps]
-            if not any(v is not None for v in values):
-                continue
-            if isinstance(values[0], dict):
-                result[field.name] = self._transpose_dicts(values)
-            else:
-                result[field.name] = values
-        return result
-
-    @staticmethod
-    def _transpose_dicts(dicts):
-        """[{"a": 1, "b": 2}, {"a": 3, "b": 4}] -> {"a": [1, 3], "b": [2, 4]}"""
-        all_keys = {k for d in dicts for k in d}
-        return {k: [d.get(k) for d in dicts] for k in all_keys}
-
-    def _extract_frames(self, step_data, obs_key="image_primary"):
-        """Extract frames for visualization from collected step data."""
-        obs = step_data.get("obs")
+    def _extract_frames(self, traj: TrajData, obs_key="image_primary"):
+        """Extract frames for visualization from a partial or full TrajData."""
+        obs = getattr(traj, "obs", None)
         if obs is None:
             return None
         if isinstance(obs, dict):
@@ -285,14 +275,19 @@ class EvalLogger:
         location: str,
         robot_name: str,
         robot_type: str,
-        evaluator_name: str,
+        control_mode: Union[str, ControlMode],
+        action_frequency_hz: float,
+        evaluator_name: Optional[str] = None,
         eval_name: Optional[str] = None,
     ):
+        self.metadata_saved = True
         if self.data_saver:
             self.data_saver.save_metadata(
                 location=location,
                 robot_name=robot_name,
                 robot_type=robot_type,
+                control_mode=control_mode,
+                action_frequency_hz=float(action_frequency_hz),
                 evaluator_name=evaluator_name,
                 eval_name=eval_name,
             )

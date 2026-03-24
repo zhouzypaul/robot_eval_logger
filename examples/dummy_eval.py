@@ -1,7 +1,7 @@
 """
 Minimal EvalLogger demo with a fake environment (no robot / manipulator_gym).
 
-Streams dummy images and proprio each step, logs with log_step / log_episode,
+Streams dummy multi-camera images, joint state, EE pose, gripper, and actions each step,
 and saves trajectories under a temp directory by default.
 
 Usage:
@@ -14,6 +14,7 @@ import numpy as np
 from absl import app, flags
 
 from robot_eval_logger import (
+    ControlMode,
     EvalLogger,
     FrameVisualizer,
     HuggingFaceStorage,
@@ -36,6 +37,14 @@ flags.DEFINE_string(
     "hf_repo_id",
     "zhouzypaul/eval_logger",
     "HF dataset repo when --use_hf is set.",
+)
+flags.DEFINE_float(
+    "action_frequency_hz",
+    10.0,
+    "Control / policy rate in Hz (required in save_metadata).",
+)
+flags.DEFINE_string(
+    "policy_id", "dummy_policy_v0", "Policy id stored on each trajectory."
 )
 
 
@@ -68,19 +77,28 @@ class DummyManipulatorEnv:
         return obs, 0.0, done, trunc, {}
 
     def _make_obs(self):
-        img = self.rng.integers(0, 256, size=self.image_shape, dtype=np.uint8)
-        proprio = self.rng.standard_normal(self.proprio_dim).astype(np.float32)
+        primary = self.rng.integers(0, 256, size=self.image_shape, dtype=np.uint8)
+        wrist_shape = (128, 128, 3)
+        wrist_l = self.rng.integers(0, 256, size=wrist_shape, dtype=np.uint8)
+        wrist_r = self.rng.integers(0, 256, size=wrist_shape, dtype=np.uint8)
+        joint_position = self.rng.standard_normal(self.proprio_dim).astype(np.float32)
         joint_velocity = 0.01 * self.rng.standard_normal(self.proprio_dim).astype(
             np.float32
         )
         joint_effort = 0.001 * self.rng.standard_normal(self.proprio_dim).astype(
             np.float32
         )
+        end_effector_pose = self.rng.standard_normal(7).astype(np.float32)
+        gripper = self.rng.random(1).astype(np.float32)
         return {
-            "image_primary": img,
-            "proprio": proprio,
+            "image_primary": primary,
+            "image_wrist_left": wrist_l,
+            "image_wrist_right": wrist_r,
+            "joint_position": joint_position,
             "joint_velocity": joint_velocity,
             "joint_effort": joint_effort,
+            "end_effector_pose": end_effector_pose,
+            "gripper": gripper,
         }
 
 
@@ -123,8 +141,10 @@ def main(_):
         location="local",
         robot_name="dummy_robot",
         robot_type="widowx",  # RobotType enum; synthetic env only
+        control_mode=ControlMode.JOINT_VELOCITY,
         evaluator_name="dummy_eval_script",
         eval_name="dummy_eval",
+        action_frequency_hz=FLAGS.action_frequency_hz,
     )
 
     def dummy_policy(_obs, _lang):
@@ -139,10 +159,16 @@ def main(_):
             obs, _reward, done, trunc, _info = env.step(action)
 
             eval_logger.log_step(
-                obs={"image_primary": obs["image_primary"]},
+                obs={
+                    "image_primary": obs["image_primary"],
+                    "image_wrist_left": obs["image_wrist_left"],
+                    "image_wrist_right": obs["image_wrist_right"],
+                },
                 action=action,
-                proprio=obs["proprio"],
+                joint_position=obs["joint_position"],
                 joint_velocity=obs["joint_velocity"],
+                end_effector_pose=obs["end_effector_pose"],
+                gripper=obs["gripper"],
                 joint_effort=obs["joint_effort"],
             )
 
@@ -165,6 +191,7 @@ def main(_):
             i_episode=i_episode,
             logging_prefix=language_instruction,
             episode_success=success,
+            policy_id=FLAGS.policy_id,
             eval_rollout_steps=eval_len,
             experienced_motor_failure=int(experienced_motor_failure),
         )

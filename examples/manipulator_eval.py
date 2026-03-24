@@ -6,6 +6,7 @@ Usage: python examples/manipulator_eval.py --ip <robot_ip>
 """
 import tempfile
 
+import numpy as np
 from absl import app, flags
 from manipulator_gym.interfaces.interface_service import ActionClientInterface
 from manipulator_gym.manipulator_env import ManipulatorEnv, StateEncoding
@@ -15,6 +16,7 @@ from manipulator_gym.utils.gym_wrappers import (
 )
 
 from robot_eval_logger import (
+    ControlMode,
     EvalLogger,
     FrameVisualizer,
     HuggingFaceStorage,
@@ -32,6 +34,16 @@ flags.DEFINE_integer("log_every_n_frames", 3, "Log every n frames.")
 
 flags.DEFINE_bool("debug", False, "Whether to debug or not.")
 flags.DEFINE_string("exp_name", "", "Name of the experiment for wandb logging.")
+flags.DEFINE_float(
+    "action_frequency_hz",
+    5.0,
+    "Policy / control rate in Hz (required in save_metadata).",
+)
+flags.DEFINE_string(
+    "policy_id",
+    "manipulator_eval_null_policy",
+    "Unique policy identifier for saved trajectories.",
+)
 
 
 def get_single_img(obs):
@@ -109,8 +121,10 @@ def main(_):
         location="berkeley",
         robot_name="widowx_dummy",
         robot_type="widowx",
+        control_mode=ControlMode.JOINT_POSITION,
         evaluator_name="dummy_tester",
         eval_name="dummy_eval",
+        action_frequency_hz=FLAGS.action_frequency_hz,
     )
 
     """
@@ -124,11 +138,16 @@ def main(_):
             actions = eval_policy(obs, language_instruction)
             print(f"Step {i} with action size of {len(actions)}")
             obs, reward, done, trunc, info = env.step(actions)
+            joint_pos = np.asarray(obs["proprio"], dtype=np.float32)
+            action_arr = np.asarray(actions, dtype=np.float32)
 
             eval_logger.log_step(
                 obs={"image_primary": get_single_img(obs)},
-                action=actions,
-                proprio=obs["proprio"],
+                action=action_arr,
+                joint_position=joint_pos,
+                joint_velocity=np.zeros_like(joint_pos),
+                end_effector_pose=np.zeros(7, dtype=np.float32),
+                gripper=np.zeros(1, dtype=np.float32),
             )
 
             if done or trunc:
@@ -149,6 +168,7 @@ def main(_):
             i_episode=i_episode,
             logging_prefix=language_instruction,
             episode_success=success,
+            policy_id=FLAGS.policy_id,
             eval_rollout_steps=eval_len,
             experienced_motor_failure=int(experienced_motor_failure),
         )

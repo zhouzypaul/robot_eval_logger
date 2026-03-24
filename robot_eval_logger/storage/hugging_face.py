@@ -4,9 +4,9 @@ Eval data is always first saved locally, and then uploaded to hf
 import logging
 import os
 import time
-from typing import Dict, List, Optional
+from typing import Optional, Union
 
-from huggingface_hub import HfApi, HfFolder
+from huggingface_hub import HfApi
 from huggingface_hub.errors import HfHubHTTPError, RepositoryNotFoundError
 
 from robot_eval_logger.storage.local import LocalStorage
@@ -91,12 +91,20 @@ class HuggingFaceStorage(LocalStorage):
         location: str,
         robot_name: str,
         robot_type: str,
-        evaluator_name: str,
+        control_mode: Union[str, ControlMode],
+        action_frequency_hz: float,
+        evaluator_name: Optional[str] = None,
         eval_name: Optional[str] = None,
     ):
         """Create a MetaData object and save it to Hugging Face"""
         metadata_path = super().save_metadata(
-            location, robot_name, robot_type, evaluator_name, eval_name
+            location=location,
+            robot_name=robot_name,
+            robot_type=robot_type,
+            control_mode=control_mode,
+            action_frequency_hz=action_frequency_hz,
+            evaluator_name=evaluator_name,
+            eval_name=eval_name,
         )
 
         # Save metadata to Hugging Face
@@ -116,38 +124,9 @@ class HuggingFaceStorage(LocalStorage):
 
         return metadata_path
 
-    def save_episode(
-        self,
-        i_episode: int,
-        language_command: str,
-        obs: Dict[str, np.ndarray],
-        success: bool,
-        action: Optional[List[np.ndarray]] = None,
-        episode_length: Optional[int] = None,
-        eval_duration: Optional[float] = None,
-        proprio: Optional[List[np.ndarray]] = None,
-        velocity: Optional[List[np.ndarray]] = None,
-        effort: Optional[List[np.ndarray]] = None,
-        partial_success: Optional[float] = None,
-        language_feedback: Optional[str] = None,
-        **kwargs,
-    ):
-        """Create a TrajData object and save it to Hugging Face."""
-        traj_path = super().save_episode(
-            i_episode,
-            language_command,
-            obs,
-            success,
-            action,
-            episode_length,
-            eval_duration,
-            proprio,
-            velocity,
-            effort,
-            partial_success,
-            language_feedback,
-            **kwargs,
-        )
+    def save_episode(self, i_episode: int, traj: TrajData):
+        """Save ``traj`` locally then upload to Hugging Face."""
+        traj_path = super().save_episode(i_episode, traj)
 
         # Upload to Hugging Face with error handling
         path_in_repo = os.path.join(
