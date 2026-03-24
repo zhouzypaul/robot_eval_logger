@@ -162,9 +162,10 @@ class EvalLogger:
     def log_episode(
         self,
         i_episode,
-        logging_prefix,
+        language_command: str,
         episode_success,
         *,
+        viz_logging_prefix: Optional[str] = None,
         policy_id: Optional[str] = None,
         **kwargs,
     ):
@@ -178,12 +179,17 @@ class EvalLogger:
 
         Args:
             i_episode: Episode index.
-            logging_prefix: Language task string; also used as wandb key prefix.
+            language_command: Task instruction stored on ``TrajData`` and used as
+                the default wandb / visualization key prefix unless overridden.
             episode_success: Binary success flag.
+            viz_logging_prefix: Optional wandb and frame-viz key prefix; defaults
+                to ``language_command``.
             policy_id: Optional per-run policy identifier (checkpoint, run id, etc.).
             **kwargs: Additional episode-level fields (e.g. partial_success, eval_duration).
         """
         self.current_episode = i_episode
+        if viz_logging_prefix is None:
+            viz_logging_prefix = language_command
 
         kwargs.pop("collection_time", None)
 
@@ -198,24 +204,24 @@ class EvalLogger:
 
         success_stats = self.log_success_rates(
             step=i_episode,
-            logging_prefix=logging_prefix,
+            logging_prefix=viz_logging_prefix,
             episode_success=episode_success,
         )
         if self.frames_visualizer is not None:
             frames_viz = self.frames_visualizer.log_frames(
                 step=i_episode,
-                logging_prefix=logging_prefix,
+                logging_prefix=viz_logging_prefix,
                 frames=frames_to_log,
-                success_rates=self.past_success_rates[logging_prefix],
+                success_rates=self.past_success_rates[viz_logging_prefix],
             )
         else:
             frames_viz = {}
-        others = {f"{logging_prefix}/{k}": v for k, v in kwargs.items()}
+        others = {f"{viz_logging_prefix}/{k}": v for k, v in kwargs.items()}
         to_log = {**frames_viz, **success_stats, **others}
 
         if self.wandb_logger is not None:
             assert (
-                logging_prefix is not None
+                viz_logging_prefix is not None
             ), "Doesn't support logging without a prefix currently"
             for k in to_log.keys():
                 wandb.define_metric(f"{k}/*", step_metric="num_episode")
@@ -226,7 +232,7 @@ class EvalLogger:
                 **traj.to_dict(),
                 **kwargs,
                 **episode_specific,
-                language_command=logging_prefix,
+                language_command=language_command,
                 success=episode_success,
                 episode_length=len(self._current_episode_steps),
             )

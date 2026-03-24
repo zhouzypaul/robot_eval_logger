@@ -84,7 +84,7 @@ eval_logger.save_metadata(
 
 **Per timestep** (`log_step`): multi-camera images (`obs` dict: e.g. base + wrists), joint position, joint velocity, end-effector pose (flat vector), gripper state, commanded action, and optional joint effort/torque.
 
-**Per episode** (`log_episode`): language task string (`logging_prefix`), binary **success**, optional **policy id**, plus any extra **kwargs** (e.g. `partial_success`). **Collection time** (`datetime.now().isoformat()`) and **policy id** are stored on each `TrajData` pickle but are **not** sent to wandb. **Wandb** gets only success-rate metrics, frame visualizations, and kwargs (prefixed with the language string). **Run-level** fields from `save_metadata` stay in `metadata.json` only. Pair `traj_*.pkl` with `metadata.json` in the eval directory when analyzing data.
+**Per episode** (`log_episode`): **`language_command`** (stored on `TrajData` and, by default, used as the wandb key prefix), binary **success**, optional **`viz_logging_prefix`** (overrides the wandb/frame-viz prefix without changing saved `language_command`), optional **policy id**, plus any extra **kwargs** (e.g. `partial_success`). **Collection time** (`datetime.now().isoformat()`) and **policy id** are stored on each `TrajData` pickle but are **not** sent to wandb. **Wandb** gets only success-rate metrics, frame visualizations, and kwargs (prefixed with the viz prefix, usually the language command). **Run-level** fields from `save_metadata` stay in `metadata.json` only. Pair `traj_*.pkl` with `metadata.json` in the eval directory when analyzing data.
 
 Run-level context is stored in `metadata.json` via `save_metadata`: location, robot name, robot type, evaluator, eval name, control mode, **action frequency (Hz, required)**, run start time.
 
@@ -105,10 +105,10 @@ eval_logger.log_step(
 
 eval_logger.log_episode(
     i_episode=i_episode,
-    logging_prefix="put the mushroom into the pot",
+    language_command="put the mushroom into the pot",
     episode_success=True,
     policy_id="pi05_checkpoint_12345",
-    partial_success=0.0,  # kwargs → TrajData + wandb (prefixed by logging_prefix)
+    partial_success=0.0,  # kwargs → TrajData + wandb (prefixed by viz prefix)
 )
 # collection_time is set on TrajData only (not wandb).
 ```

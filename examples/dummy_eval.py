@@ -189,7 +189,7 @@ def main(_):
         )
         eval_logger.log_episode(
             i_episode=i_episode,
-            logging_prefix=language_instruction,
+            language_command=language_instruction,
             episode_success=success,
             policy_id=FLAGS.policy_id,
             eval_rollout_steps=eval_len,
