@@ -48,6 +48,7 @@ class EvalLogger:
         # episode tracking
         self.current_episode = 0
         self._current_episode_steps = []
+        self._episode_wall_start: Optional[float] = None
 
         # set up periodic logging
         # TODO(zhouzypaul): make this into a separate class the logger can take in instead
@@ -166,41 +167,52 @@ class EvalLogger:
         episode_success,
         *,
         viz_logging_prefix: Optional[str] = None,
+        partial_success: Optional[float] = None,
+        language_feedback: Optional[str] = None,
         policy_id: Optional[str] = None,
         **kwargs,
     ):
         """Log episode-level metrics at the end of an episode.
 
         Step-level data is assembled from prior log_step() calls. Run-level
-        fields from :meth:`save_metadata` live in ``metadata.json`` only (not on
-        each ``TrajData`` pickle). Wandb episode metrics use ``kwargs`` only
-        (plus success rates and frame visualizations), not run metadata or
-        ``policy_id`` / ``collection_time``.
+        fields from :meth:`save_metadata` live in ``metadata.json`` only (not on each ``TrajData`` pickle).
 
         Args:
             i_episode: Episode index.
             language_command: Task instruction stored on ``TrajData`` and used as
                 the default wandb / visualization key prefix unless overridden.
-            episode_success: Binary success flag.
+            episode_success: Binary success flag (``TrajData.success``).
             viz_logging_prefix: Optional wandb and frame-viz key prefix; defaults
                 to ``language_command``.
-            policy_id: Optional per-run policy identifier (checkpoint, run id, etc.).
-            **kwargs: Additional episode-level fields (e.g. partial_success, eval_duration).
+            partial_success: ``TrajData.partial_success``.
+            language_feedback: ``TrajData.language_feedback``.
+            policy_id: ``TrajData.policy_id`` (checkpoint, run id, etc.).
+            **kwargs: Extra episode-level keys for ``TrajData``.
         """
         self.current_episode = i_episode
         if viz_logging_prefix is None:
             viz_logging_prefix = language_command
 
-        kwargs.pop("collection_time", None)
+        duration_seconds = (
+            time.time() - self._episode_wall_start
+            if self._episode_wall_start is not None
+            else 0.0
+        )
 
         traj = step_data_sequence_to_traj_data(self._current_episode_steps)
         frames_to_log = self._extract_frames(traj)
 
-        episode_specific = {
-            "collection_time": datetime.now().isoformat(),
+        traj_episode_fields = {
+            k: v
+            for k, v in (
+                ("partial_success", partial_success),
+                ("language_feedback", language_feedback),
+            )
+            if v is not None
         }
+        traj_episode_fields["collection_time"] = datetime.now().isoformat()
         if policy_id is not None:
-            episode_specific["policy_id"] = policy_id
+            traj_episode_fields["policy_id"] = policy_id
 
         success_stats = self.log_success_rates(
             step=i_episode,
@@ -231,16 +243,21 @@ class EvalLogger:
             traj_data = TrajData(
                 **traj.to_dict(),
                 **kwargs,
-                **episode_specific,
+                **traj_episode_fields,
                 language_command=language_command,
                 success=episode_success,
                 episode_length=len(self._current_episode_steps),
+                duration_seconds=duration_seconds,
             )
             self.data_saver.save_episode(i_episode=i_episode, traj=traj_data)
 
-        self._current_episode_steps = []
+        self._reset_new_episode()
 
         return to_log
+
+    def _reset_new_episode(self):
+        self._current_episode_steps = []
+        self._episode_wall_start = None
 
     def log_step(
         self,
@@ -253,6 +270,8 @@ class EvalLogger:
         joint_effort: Optional[np.ndarray] = None,
     ):
         """Log one transition: multi-camera images, state, and action."""
+        if not self._current_episode_steps:
+            self._episode_wall_start = time.time()
         self.total_steps += 1
         self.steps_since_last_log += 1
         self._current_episode_steps.append(

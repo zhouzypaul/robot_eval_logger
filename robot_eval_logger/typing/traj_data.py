@@ -35,7 +35,8 @@ class TrajData:
     Typical attributes (episode-level):
         language_command, success, episode_length,
         collection_time (``datetime.now().isoformat()``, set at ``log_episode``),
-        policy_id (optional), partial_success, language_feedback, eval_duration, …
+        policy_id (optional), partial_success, language_feedback,
+        duration_seconds (wall time for the episode, set by :class:`EvalLogger`), …
 
     Step-level (lists, one entry per logged timestep):
         obs (camera -> list of images), action, joint_position, joint_velocity,
@@ -47,7 +48,7 @@ class TrajData:
     language_command: str
     success: bool
     episode_length: Optional[int] = None
-    eval_duration: Optional[float] = None
+    duration_seconds: Optional[float] = None
     partial_success: Optional[float] = None
     language_feedback: Optional[str] = None
     policy_id: Optional[str] = None
@@ -120,7 +121,7 @@ def main():
         success=True,
         partial_success=0.8,
         episode_length=10,
-        eval_duration=5.0,
+        duration_seconds=5.0,
         policy_id="test_policy",
         collection_time="2025-01-01T00:00:00+00:00",
         some_other_field="just a test",
