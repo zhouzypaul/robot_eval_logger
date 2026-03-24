@@ -1,6 +1,7 @@
 import time
+from dataclasses import fields
 from threading import Event, Thread, current_thread
-from typing import Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 import wandb
@@ -46,6 +47,7 @@ class EvalLogger:
 
         # episode tracking
         self.current_episode = 0
+        self._current_episode_steps = []
 
         # set up periodic logging
         # TODO(zhouzypaul): make this into a separate class the logger can take in instead
@@ -162,18 +164,32 @@ class EvalLogger:
         i_episode,
         logging_prefix,
         episode_success,
-        frames_to_log=None,
-        actions=None,
         **kwargs,
     ):
-        """log at the end of an eval episode"""
+        """Log episode-level metrics at the end of an episode.
+
+        Step-level data (obs, action, proprio, etc.) is automatically collected
+        from prior log_step() calls within this episode.
+
+        Args:
+            i_episode: Episode index.
+            logging_prefix: Prefix for logging keys (typically the language command).
+            episode_success: Whether the episode was successful.
+            **kwargs: Episode-level metrics (e.g. partial_success, language_feedback,
+                experienced_motor_failure).
+        """
         self.current_episode = i_episode
-        # log success rate
+
+        # collect accumulated step-level data
+        step_data = self._collect_step_data()
+        frames_to_log = self._extract_frames(step_data)
+
+        # log success rate (before log_frames so frames-with-success visualizes correctly)
         success_stats = self.log_success_rates(
             step=i_episode,
             logging_prefix=logging_prefix,
             episode_success=episode_success,
-        )  # this before log_frames, so frames-with-success is visualized correctly
+        )
         # log frames visualization
         if self.frames_visualizer is not None:
             frames_viz = self.frames_visualizer.log_frames(
@@ -184,13 +200,12 @@ class EvalLogger:
             )
         else:
             frames_viz = {}
-        # log all others
+        # log episode-level kwargs
         others = {f"{logging_prefix}/{k}": v for k, v in kwargs.items()}
         to_log = {**frames_viz, **success_stats, **others}
 
         # push to wandb
         if self.wandb_logger is not None:
-            # change the x-axis on wandb
             assert (
                 logging_prefix is not None
             ), "Doesn't support logging without a prefix currently"
@@ -200,24 +215,70 @@ class EvalLogger:
 
         # save the data for this episode
         if self.data_saver:
-            self.data_saver.save_episode(
-                i_episode=i_episode,
-                language_command=logging_prefix,
-                obs={"image_primary": frames_to_log},
-                success=episode_success,
-                action=actions,
+            save_data = {
+                **step_data,
                 **kwargs,
-            )
+                "language_command": logging_prefix,
+                "success": episode_success,
+                "episode_length": len(self._current_episode_steps),
+            }
+            self.data_saver.save_episode(i_episode=i_episode, **save_data)
+
+        # clear step buffer for next episode
+        self._current_episode_steps = []
 
         return to_log
 
     def log_step(
         self,
+        obs: Dict[str, np.ndarray],
+        action: np.ndarray,
+        proprio: np.ndarray,
+        joint_velocity: Optional[np.ndarray] = None,
+        joint_effort: Optional[np.ndarray] = None,
     ):
-        """log at the end of an action step during an eval episode"""
-        # increment step counters
+        """Log transition-level data at the end of an action step."""
         self.total_steps += 1
         self.steps_since_last_log += 1
+        self._current_episode_steps.append(
+            StepData(
+                obs=obs,
+                action=action,
+                proprio=proprio,
+                joint_velocity=joint_velocity,
+                joint_effort=joint_effort,
+            )
+        )
+
+    def _collect_step_data(self):
+        """Transpose list of StepData into a dict-of-lists for trajectory storage."""
+        if not self._current_episode_steps:
+            return {}
+        result = {}
+        for field in fields(StepData):
+            values = [getattr(step, field.name) for step in self._current_episode_steps]
+            if not any(v is not None for v in values):
+                continue
+            if isinstance(values[0], dict):
+                result[field.name] = self._transpose_dicts(values)
+            else:
+                result[field.name] = values
+        return result
+
+    @staticmethod
+    def _transpose_dicts(dicts):
+        """[{"a": 1, "b": 2}, {"a": 3, "b": 4}] -> {"a": [1, 3], "b": [2, 4]}"""
+        all_keys = {k for d in dicts for k in d}
+        return {k: [d.get(k) for d in dicts] for k in all_keys}
+
+    def _extract_frames(self, step_data, obs_key="image_primary"):
+        """Extract frames for visualization from collected step data."""
+        obs = step_data.get("obs")
+        if obs is None:
+            return None
+        if isinstance(obs, dict):
+            return obs.get(obs_key)
+        return None
 
     def save_metadata(
         self,

@@ -6,20 +6,32 @@ import numpy as np
 
 
 @dataclass
+class StepData:
+    """Single-timestep transition data logged via EvalLogger.log_step()."""
+
+    obs: Dict[str, np.ndarray]  # camera name -> image
+    action: np.ndarray
+    proprio: np.ndarray
+    joint_velocity: Optional[np.ndarray] = None
+    joint_effort: Optional[np.ndarray] = None
+
+
+@dataclass
 class TrajData:
+    # episode-level fields
     language_command: str
-    obs: Dict[str, np.ndarray]  # mapping different cameras to images
     success: bool
-    action: Optional[List[np.ndarray]] = None
     episode_length: Optional[int] = None
     eval_duration: Optional[float] = None
+    partial_success: Optional[float] = None  # 0 to 1, for partial credit
+    language_feedback: Optional[str] = None
+
+    # step-level fields (lists with one entry per timestep)
+    obs: Optional[Dict[str, List[np.ndarray]]] = None  # camera name -> [images]
+    action: Optional[List[np.ndarray]] = None
     proprio: Optional[List[np.ndarray]] = None
     velocity: Optional[List[np.ndarray]] = None
     effort: Optional[List[np.ndarray]] = None
-    partial_success: Optional[
-        float
-    ] = None  # 0 to 1, for partial credit towards success
-    language_feedback: Optional[str] = None
 
     def __init__(self, **kwargs):
         """store arbitrary data"""

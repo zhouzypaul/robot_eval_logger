@@ -119,60 +119,37 @@ def main(_):
 
     def eval_rollout():
         obs, info = env.reset(moving_time=5)
-        frames_recorder = []
-        actions_recorder = []
-        proprio_recorder = []
-        infos = [info]
 
         for i in range(FLAGS.max_steps):
             actions = eval_policy(obs, language_instruction)
             print(f"Step {i} with action size of {len(actions)}")
-            # step env -- info contains full "chunk" of observations for logging
-            # obs only contains observation for final step of chunk
             obs, reward, done, trunc, info = env.step(actions)
-            frames_recorder.append(get_single_img(obs))
-            actions_recorder.append(actions)
-            proprio_recorder.append(obs["proprio"])
-            infos.append(info)
 
-            eval_logger.log_step()
+            eval_logger.log_step(
+                obs={"image_primary": get_single_img(obs)},
+                action=actions,
+                proprio=obs["proprio"],
+            )
 
             if done or trunc:
-                # trunc is because of robot failure
                 break
 
-        # return whether rollout is successful without robot failure
         execution_successful = not trunc
-        eval_len = i
-
-        # flatten the info
-        infos = {k: [info[k] for info in infos] for k in infos[0].keys()}
-        infos["eval_len"] = eval_len
-        infos["frames"] = frames_recorder
-        infos["actions"] = actions_recorder
-        infos["proprio"] = proprio_recorder
-
-        return obs, infos, execution_successful
+        return obs, execution_successful, i
 
     for i_episode in range(FLAGS.num_episodes):
 
-        obs, eval_infos, eval_without_robot_error = eval_rollout()
+        obs, eval_without_robot_error, eval_len = eval_rollout()
         experienced_motor_failure = False
 
-        # end of episode
-        # success detection
         success = False
         print(f"Episode {i_episode} completed with success: {success}")
 
-        # logging
         eval_logger.log_episode(
             i_episode=i_episode,
             logging_prefix=language_instruction,
             episode_success=success,
-            frames_to_log=eval_infos["frames"],
-            actions=eval_infos["actions"],
-            proprio=eval_infos["proprio"],
-            eval_rollout_steps=eval_infos["eval_len"],
+            eval_rollout_steps=eval_len,
             experienced_motor_failure=int(experienced_motor_failure),
         )
 

@@ -1,8 +1,8 @@
 # robot_eval_logger
-This package provides a logger for robot evaluations. The main functionalities are:
+This package provides utils for logging and saving deployment-style (e.g. evals, online RL) robot data. The main functionalities include:
 - **Flexible logging**: with a few lines of addition to your evaluation code, you can log any data you want
-- **Visualization**: visualize the logged data (e.g. videos, success rates) easily through wandb ([weights & biases](https://wandb.ai)).
 - **Data Storage**: store the logged data locally and / or upload to HuggingFace datasets
+- **Visualization**: visualize the logged data (e.g. videos, success rates) easily through wandb ([weights & biases](https://wandb.ai)).
 
 
 ## Installation
@@ -17,8 +17,9 @@ pip install -e .
 First, create the `EvalLogger` instance. When creating the `EvalLogger`, you can optionally pass in three functionalities this package provides:
 - `wandb_logger`: log metrics to wandb. [Here](https://wandb.ai/rail-iterated-offline-rl/auto_eval_beta_launch/runs/test%20good%20_open_web_client_open_the_drawer_20250305_005411?nw=nwuserzhouzypaul) is an example of the logged metrics.
 - `frames_visualizer`: make videos, film strips, and success information plotted against initial and final frames to visualize the evaluation. See [here](https://wandb.ai/rail-iterated-offline-rl/auto_eval_beta_launch/runs/test%20good%20_open_web_client_open_the_drawer_20250305_005411?nw=nwuserzhouzypaul) for an example.
-- `data_saver`: save the logged data locally and / or upload to HuggingFace datasets
-If you don't need some / all of these, pass in `None` for the corresponding argument.
+- `data_saver`: save the logged data locally and / or upload to HuggingFace datasets.
+
+If you don't need some of these functionalities, pass in `None` for the corresponding argument.
 
 ```python
 from robot_eval_logger import (
@@ -75,26 +76,40 @@ eval_logger.save_metadata(
 )
 ```
 
-After each evaluation episode, log the episode data. You need to pass in the episode number, the prefix for the logging (e.g. language prompt), the success status, and the frames to log. You can also pass in any additional kwargs to log any data you want during an evaluation.
+During each environment step, log transition-level data (observations, actions, proprio, etc.). The logger buffers these until the end of the episode.
 ```python
-kwargs = {}  # put any additional kwargs here
+eval_logger.log_step(
+    obs={"image_primary": image_hwc_uint8},
+    action=action_array,
+    proprio=proprio_array,
+    joint_velocity=vel,  # optional
+    joint_effort=effort,  # optional
+)
+```
+
+After each evaluation episode, log episode-level metrics only. Step data from `log_step` is assembled automatically for storage and frame visualization.
+```python
 eval_logger.log_episode(
     i_episode=i_episode,
     logging_prefix="put the mushroom into the pot",
     episode_success=True,
-    frames_to_log=[obs["image"] for obs in obs_list],
-    **kwargs,
+    partial_success=0.0,  # optional episode-level kwargs also go here
 )
 ```
 
-You can also log the evaluation throughput in terms of the number of evaluation steps taken per minute:
-```python
-eval_logger.log_step()
-```
+You can also enable periodic evaluation throughput logging (steps per minute) by passing `log_step_stats_interval_minutes` when constructing `EvalLogger`; `log_step()` increments the internal step counters used for that feature.
 
 
 ## Example Usage
-See `examples/manipulator_eval.py` for an example of using the `EvalLogger` class in an evaluation loop on WidwoX robots. (For now, this script runs null actions on the robot, and you can use it to test the logger functionalities.)
+
+**Standalone dummy environment (no robot stack)** — `examples/dummy_eval.py` uses a small fake env that streams random images and proprio. Use this to try the logger after `pip install -e .` without any extra packages.
+```bash
+python examples/dummy_eval.py
+# wandb disabled by default (--debug defaults to True); real logging: --nodebug
+# Local disk only by default; HuggingFace upload: add --use_hf (see script flags)
+```
+
+**Real manipulator** — `examples/manipulator_eval.py` wires `EvalLogger` into a WidowX-style loop via `manipulator_gym` (separate install). It sends null actions for testing.
 ```bash
 python examples/manipulator_eval.py --ip <robot_ip>
 ```
