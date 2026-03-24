@@ -188,7 +188,6 @@ def main(_):
             f"Episode {i_episode} done, success={success}, last step index={eval_len}"
         )
         eval_logger.log_episode(
-            i_episode=i_episode,
             language_command=language_instruction,
             episode_success=success,
             policy_id=FLAGS.policy_id,

@@ -165,7 +165,6 @@ def main(_):
         print(f"Episode {i_episode} completed with success: {success}")
 
         eval_logger.log_episode(
-            i_episode=i_episode,
             language_command=language_instruction,
             episode_success=success,
             policy_id=FLAGS.policy_id,

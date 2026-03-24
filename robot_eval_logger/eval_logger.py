@@ -15,7 +15,7 @@ class EvalLogger:
     Class to log robot evaluation metrics. This is the main interface to interact with the logger.
     This class offers the following main APIs:
         - log_step: log all metrics for a single step, users can call this at the end of every step
-        - log_episode: log all metrics for an entire episode, users can all this at the end of every episode
+        - log_episode: log all metrics for an entire episode, users can call this at the end of every episode
         - save_metadata: save metadata about the evaluation
 
     The functionality the EvalLogger offers are:
@@ -95,14 +95,17 @@ class EvalLogger:
         if self.frames_visualizer is None:
             return
 
-        # Log the remaining frames
+        # Log the remaining frames (current_episode is next index; last logged is one less)
+        final_episode_index = (
+            self.current_episode - 1 if self.current_episode > 0 else 0
+        )
         frames_viz = self.frames_visualizer.log_remaining_frames(
-            final_step=self.current_episode, success_rates=self.past_success_rates
+            final_step=final_episode_index, success_rates=self.past_success_rates
         )
 
         # Push to wandb if there's anything to log
         if frames_viz and self.wandb_logger is not None:
-            self.wandb_logger.log({**frames_viz, "num_episode": self.current_episode})
+            self.wandb_logger.log({**frames_viz, "num_episode": final_episode_index})
 
     def _periodic_logging(self):
         """Background thread that periodically logs time-related stats"""
@@ -162,7 +165,6 @@ class EvalLogger:
 
     def log_episode(
         self,
-        i_episode,
         language_command: str,
         episode_success,
         *,
@@ -177,8 +179,12 @@ class EvalLogger:
         Step-level data is assembled from prior log_step() calls. Run-level
         fields from :meth:`save_metadata` live in ``metadata.json`` only (not on each ``TrajData`` pickle).
 
+        Episode index for wandb, storage (``traj_{i}.pkl``), and success-rate
+        bookkeeping is ``self.current_episode`` (0-based), then incremented after
+        each successful ``log_episode`` (so after a call, ``current_episode`` is
+        the number of episodes logged).
+
         Args:
-            i_episode: Episode index.
             language_command: Task instruction stored on ``TrajData`` and used as
                 the default wandb / visualization key prefix unless overridden.
             episode_success: Binary success flag (``TrajData.success``).
@@ -189,7 +195,8 @@ class EvalLogger:
             policy_id: ``TrajData.policy_id`` (checkpoint, run id, etc.).
             **kwargs: Extra episode-level keys for ``TrajData``.
         """
-        self.current_episode = i_episode
+        i_episode = self.current_episode
+
         if viz_logging_prefix is None:
             viz_logging_prefix = language_command
 
@@ -252,6 +259,7 @@ class EvalLogger:
             self.data_saver.save_episode(i_episode=i_episode, traj=traj_data)
 
         self._reset_new_episode()
+        self.current_episode += 1
 
         return to_log
 
