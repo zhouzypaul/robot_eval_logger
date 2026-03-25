@@ -49,6 +49,7 @@ class EvalLogger:
         self.current_episode = 0
         self._current_episode_steps = []
         self._episode_wall_start: Optional[float] = None
+        self._step_input_check_passed = False
 
         # set up periodic logging
         # TODO(zhouzypaul): make this into a separate class the logger can take in instead
@@ -267,6 +268,25 @@ class EvalLogger:
         self._current_episode_steps = []
         self._episode_wall_start = None
 
+    def _check_step_inputs(
+        self,
+        obs: Dict[str, np.ndarray],
+        action: np.ndarray,
+        joint_position: np.ndarray,
+        joint_velocity: np.ndarray,
+        end_effector_pose: np.ndarray,
+        gripper: np.ndarray,
+        joint_effort: Optional[np.ndarray] = None,
+    ):
+        assert action.ndim == 1, "Action must be a 1D array, and not action chunks"
+        assert joint_position.ndim == 1, "Joint position must be a 1D array"
+        assert joint_velocity.ndim == 1, "Joint velocity must be a 1D array"
+        assert end_effector_pose.ndim == 1, "End effector pose must be a 1D array"
+        assert gripper.ndim == 1, "Gripper must be a 1D array"
+        if joint_effort is not None:
+            assert joint_effort.ndim == 1, "Joint effort must be a 1D array"
+        self._step_input_check_passed = True
+
     def log_step(
         self,
         obs: Dict[str, np.ndarray],
@@ -278,6 +298,17 @@ class EvalLogger:
         joint_effort: Optional[np.ndarray] = None,
     ):
         """Log one transition: multi-camera images, state, and action."""
+        if not self._step_input_check_passed:
+            self._check_step_inputs(
+                obs,
+                action,
+                joint_position,
+                joint_velocity,
+                end_effector_pose,
+                gripper,
+                joint_effort,
+            )
+
         if not self._current_episode_steps:
             self._episode_wall_start = time.time()
         self.total_steps += 1
