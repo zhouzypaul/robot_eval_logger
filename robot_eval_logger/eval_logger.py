@@ -55,48 +55,6 @@ class EvalLogger:
             )
             self._time_logger.start()
 
-    def stop_time_logging(self):
-        """Safely stop the time logging thread."""
-        if self._time_logger is not None:
-            self._time_logger.stop()
-
-    def flush(self):
-        """Wait for all pending async saves/uploads to complete.
-
-        Safe to call multiple times.  Call this before exiting to ensure
-        no trajectory data is lost when ``StorageConfig.async_saving``
-        or ``StorageConfig.batch_hf_uploads`` are enabled.
-        """
-        if self.data_saver is not None:
-            self.data_saver.flush()
-
-    def __del__(self):
-        """Clean up the time logging & saving thread when the logger is destroyed and log any remaining frames"""
-        try:
-            self._visualize_remaining_frames()
-            self.flush()
-            self.stop_time_logging()
-        except Exception as e:
-            print(f"Error in EvalLogger.__del__: {e}")
-            pass  # ignore any errors during cleanup
-
-    def _visualize_remaining_frames(self):
-        """Log any remaining frames that haven't been logged due to not reaching the periodic threshold"""
-        if self.frames_visualizer is None:
-            return
-
-        # Log the remaining frames (current_episode is next index; last logged is one less)
-        final_episode_index = (
-            self.current_episode - 1 if self.current_episode > 0 else 0
-        )
-        frames_viz = self.frames_visualizer.log_remaining_frames(
-            final_step=final_episode_index, success_rates=self.past_success_rates
-        )
-
-        # Push to wandb if there's anything to log
-        if frames_viz and self.wandb_logger is not None:
-            self.wandb_logger.log({**frames_viz, "num_episode": final_episode_index})
-
     def log_episode(
         self,
         language_command: str,
@@ -320,3 +278,45 @@ class EvalLogger:
             f"{logging_prefix}/overall_success_rate": overall_success_rate,
         }
         return to_log
+
+    def stop_time_logging(self):
+        """Safely stop the time logging thread."""
+        if self._time_logger is not None:
+            self._time_logger.stop()
+
+    def flush(self):
+        """Wait for all pending async saves/uploads to complete.
+
+        Safe to call multiple times.  Call this before exiting to ensure
+        no trajectory data is lost when ``StorageConfig.async_saving``
+        or ``StorageConfig.batch_hf_uploads`` are enabled.
+        """
+        if self.data_saver is not None:
+            self.data_saver.flush()
+
+    def __del__(self):
+        """Clean up the time logging & saving thread when the logger is destroyed and log any remaining frames"""
+        try:
+            self._visualize_remaining_frames()
+            self.flush()
+            self.stop_time_logging()
+        except Exception as e:
+            print(f"Error in EvalLogger.__del__: {e}")
+            pass  # ignore any errors during cleanup
+
+    def _visualize_remaining_frames(self):
+        """Log any remaining frames that haven't been logged due to not reaching the periodic threshold"""
+        if self.frames_visualizer is None:
+            return
+
+        # Log the remaining frames (current_episode is next index; last logged is one less)
+        final_episode_index = (
+            self.current_episode - 1 if self.current_episode > 0 else 0
+        )
+        frames_viz = self.frames_visualizer.log_remaining_frames(
+            final_step=final_episode_index, success_rates=self.past_success_rates
+        )
+
+        # Push to wandb if there's anything to log
+        if frames_viz and self.wandb_logger is not None:
+            self.wandb_logger.log({**frames_viz, "num_episode": final_episode_index})

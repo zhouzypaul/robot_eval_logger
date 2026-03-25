@@ -22,6 +22,16 @@ class HuggingFaceStorage(LocalStorage):
     Data is first written locally (benefiting from all :class:`LocalStorage`
     optimizations), then uploaded to a HF dataset repository.
 
+    The Hugging Face dataset repo mirrors the same ``<eval_id>/`` tree under
+    ``hf_dir_name`` (default ``"eval_data"``):
+
+    - hf_dir_name
+        - <eval_id>
+            - metadata.json
+            - traj_0.pkl
+            - traj_1.pkl
+            ...
+
     When ``StorageConfig.batch_hf_uploads`` is True (default), episode files are
     queued and committed to HuggingFace in a single API call during ``flush()``.
     This replaces N HTTP round-trips with one, dramatically reducing upload
