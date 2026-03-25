@@ -13,13 +13,13 @@ cd robot_eval_logger
 pip install -e .
 ```
 
-## Getting Started
+## Creating the logger
 First, create the `EvalLogger` instance. When creating the `EvalLogger`, you can optionally pass in three functionalities this package provides:
 - `wandb_logger`: log metrics to wandb. [Here](https://wandb.ai/rail-iterated-offline-rl/auto_eval_beta_launch/runs/test%20good%20_open_web_client_open_the_drawer_20250305_005411?nw=nwuserzhouzypaul) is an example of the logged metrics.
 - `frames_visualizer`: make videos, film strips, and success information plotted against initial and final frames to visualize the evaluation. See [here](https://wandb.ai/rail-iterated-offline-rl/auto_eval_beta_launch/runs/test%20good%20_open_web_client_open_the_drawer_20250305_005411?nw=nwuserzhouzypaul) for an example.
 - `data_saver`: save the logged data locally and / or upload to HuggingFace datasets.
 
-If you don't need some of these functionalities, pass in `None` for the corresponding argument.
+**NOTE**: If you don't need some of these functionalities, pass in `None` for the corresponding argument. For instance, if you only want to save the evaluation/deployment data, you only need to pass in `data_saver`, and set `wandb_logger` and `frames_visualizer` to `None`.
 
 ```python
 from robot_eval_logger import (
@@ -30,14 +30,14 @@ from robot_eval_logger import (
     WandBLogger,
 )
 
-# wandb logger that logs metrics to wandb
+# [Optional] wandb logger that logs metrics to wandb
 wandb_config = WandBLogger.get_default_config()
 wandb_logger = WandBLogger(
     wandb_config=wandb_config,
     variant={"exp_name": "testing_eval_logger"},
 )
 
-# frames visualizer that makes videos, film strips, and success information plotted against initial and final frames to visualize the evaluation
+# [Optional] frames visualizer that makes videos, film strips, and success information plotted against initial and final frames to visualize the evaluation
 frames_visualizer = FrameVisualizer(
     episode_viz_frame_interval=10,  # when creating a film strip of the eval trajectory, visualize a frame every 10 frames
     success_viz_every_n=3,  # for every 3 episodes, visualize success information alongside initial and final frames
@@ -49,7 +49,7 @@ frames_visualizer = FrameVisualizer(
 data_saver = LocalStorage(
     storage_dir='path/to/your/storage',
 )
-# Option 2: save data to HuggingFace
+# [Recommended] Option 2: save data to HuggingFace
 data_saver = HuggingFaceStorage(
     storage_dir='path/to/your/storage',
     repo_id="HF_USERNAME/eval_logger",
@@ -65,7 +65,13 @@ eval_logger = EvalLogger(
 )
 ```
 
-Before an evaluation, you should save the metadata for the current evaluation run.
+## Using the logger
+
+There is three things you need to do to use the logger: (1) save the metadata for the current evaluation run, (2) call `log_step` after each interation with the environment, and (3) call `log_episode` at the end of each episode.
+
+### (1) Saving the metadata
+You need to save the metadata for the current evaluation run before doing anything else with the logger. The metadata includes the location, robot name, robot type, evaluator name, eval name, control mode, and action frequency. It is saved as a json file.
+
 ```python
 from robot_eval_logger import ControlMode
 
@@ -80,13 +86,21 @@ eval_logger.save_metadata(
 )
 ```
 
-### What gets logged
+#### Robot types (`RobotType`)
+
+You need to log the robot type for each evaluation run. The current supported robot types are in `robot_eval_logger/typing/eval_metadata.py`:
+
+
+| Member | String value |
+|--------|----------------|
+| `RobotType.FRANKA` | `"franka"` |
+| `RobotType.WIDOWX` | `"widowx"` |
+
+If you are using a different robot, please make sure to add a new member to the `RobotType` enum, and make a Pull Request to this package.
+
+### (2) Logging the step
 
 **Per timestep** (`log_step`): multi-camera images (`obs` dict: e.g. base + wrists), joint position, joint velocity, end-effector pose (flat vector), gripper state, commanded action, and optional joint effort/torque.
-
-**Per episode** (`log_episode`): episode index for `traj_{i}.pkl` and wandb is tracked internally (`current_episode`, incremented after each call); **`language_command`** (stored on `TrajData` and, by default, used as the wandb key prefix), binary **success**, optional **`viz_logging_prefix`** (overrides the wandb/frame-viz prefix without changing saved `language_command`), optional **policy id**, plus any extra **kwargs** (e.g. `partial_success`). **Collection time** (`datetime.now().isoformat()`) and **policy id** are stored on each `TrajData` pickle but are **not** sent to wandb. **Wandb** gets only success-rate metrics, frame visualizations, and kwargs (prefixed with the viz prefix, usually the language command). **Run-level** fields from `save_metadata` stay in `metadata.json` only. Pair `traj_*.pkl` with `metadata.json` in the eval directory when analyzing data.
-
-Run-level context is stored in `metadata.json` via `save_metadata`: location, robot name, robot type, evaluator, eval name, control mode, **action frequency (Hz, required)**, run start time.
 
 ```python
 eval_logger.log_step(
@@ -102,30 +116,27 @@ eval_logger.log_step(
     gripper=gripper_array,  # e.g. shape (1,) for width or openness
     joint_effort=torque,  # optional
 )
-
-eval_logger.log_episode(
-    language_command="put the mushroom into the pot",
-    episode_success=True,
-    policy_id="pi05_checkpoint_12345",
-    partial_success=0.0,  # kwargs → TrajData + wandb (prefixed by viz prefix)
-)
-# collection_time is set on TrajData only (not wandb).
 ```
+
 
 You can also enable periodic evaluation throughput logging (steps per minute) by passing `log_step_stats_interval_minutes` when constructing `EvalLogger`; `log_step()` increments the internal step counters used for that feature.
 
-### Robot types (`RobotType`)
+### (3) Logging the episode
 
-You need to log the robot type for each evaluation run. The current supported robot types are in `robot_eval_logger/typing/eval_metadata.py`:
+Make sure to call `log_episode` at the end of each episode. The logger depends on this to track the different episodes and reset internal states.
 
+**Per episode** (`log_episode`): episode index for `traj_{i}.pkl` and wandb is tracked internally (`current_episode`, incremented after each call); **`language_command`** (stored on `TrajData` and, by default, used as the wandb key prefix), binary **success**, optional **`viz_logging_prefix`** (overrides the wandb/frame-viz prefix without changing saved `language_command`), optional **policy id**, plus any extra **kwargs** (e.g. `partial_success`). **Collection time** (`datetime.now().isoformat()`) and **policy id** are stored on each `TrajData` pickle but are **not** sent to wandb. **Wandb** gets only success-rate metrics, frame visualizations, and kwargs (prefixed with the viz prefix, usually the language command). **Run-level** fields from `save_metadata` stay in `metadata.json` only. Pair `traj_*.pkl` with `metadata.json` in the eval directory when analyzing data.
 
-| Member | String value |
-|--------|----------------|
-| `RobotType.FRANKA` | `"franka"` |
-| `RobotType.WIDOWX` | `"widowx"` |
+Run-level context is stored in `metadata.json` via `save_metadata`: location, robot name, robot type, evaluator, eval name, control mode, **action frequency (Hz, required)**, run start time.
 
-If you are using a different robot, please make sure to add a new member to the `RobotType` enum, and make a Pull Request to this package.
-
+```python
+eval_logger.log_episode(
+    language_command="put the mushroom into the pot",
+    episode_success=False,
+    policy_id="pi05_checkpoint_12345",
+    partial_success=0.6,
+)
+```
 
 ## Example Usage
 
