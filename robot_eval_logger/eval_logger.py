@@ -230,31 +230,33 @@ class EvalLogger:
         if policy_id is not None:
             traj_episode_fields["policy_id"] = policy_id
 
-        success_stats = self.log_success_rates(
-            step=i_episode,
-            logging_prefix=viz_logging_prefix,
-            episode_success=episode_success,
-        )
-        if self.frames_visualizer is not None:
-            frames_viz = self.frames_visualizer.log_frames(
-                step=i_episode,
-                logging_prefix=viz_logging_prefix,
-                frames=frames_to_log,
-                success_rates=self.past_success_rates[viz_logging_prefix],
-            )
-        else:
-            frames_viz = {}
-        others = {f"{viz_logging_prefix}/{k}": v for k, v in kwargs.items()}
-        to_log = {**frames_viz, **success_stats, **others}
-
+        # wandb stats and visualization
         if self.wandb_logger is not None:
             assert (
                 viz_logging_prefix is not None
             ), "Doesn't support logging without a prefix currently"
+
+            success_stats = self.log_success_rates(
+                logging_prefix=viz_logging_prefix,
+                episode_success=episode_success,
+            )
+            if self.frames_visualizer is not None:
+                frames_viz = self.frames_visualizer.log_frames(
+                    step=i_episode,
+                    logging_prefix=viz_logging_prefix,
+                    frames=frames_to_log,
+                    success_rates=self.past_success_rates[viz_logging_prefix],
+                )
+            else:
+                frames_viz = {}
+            others = {f"{viz_logging_prefix}/{k}": v for k, v in kwargs.items()}
+            to_log = {**frames_viz, **success_stats, **others}
+
             for k in to_log.keys():
                 wandb.define_metric(f"{k}/*", step_metric="num_episode")
             self.wandb_logger.log({**to_log, "num_episode": i_episode})
 
+        # save the trajectory data
         if self.data_saver:
             traj_data = TrajData(
                 **traj.to_dict(),
@@ -366,10 +368,10 @@ class EvalLogger:
 
     def log_success_rates(
         self,
-        step,
         logging_prefix,
         episode_success,
     ):
+        """visualizes success rate metrics"""
         # save episode success
         if logging_prefix not in self.past_success_rates:
             self.past_success_rates[logging_prefix] = []
