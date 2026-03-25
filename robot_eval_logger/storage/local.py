@@ -1,8 +1,12 @@
+import logging
 import os
-from typing import Optional, Union
+from concurrent.futures import Future, ThreadPoolExecutor
+from typing import List, Optional, Union
 
-from robot_eval_logger.storage.base_saver import BaseSaver
+from robot_eval_logger.storage.base_saver import BaseSaver, StorageConfig
 from robot_eval_logger.typing import *
+
+logger = logging.getLogger(__name__)
 
 
 class LocalStorage(BaseSaver):
@@ -18,6 +22,17 @@ class LocalStorage(BaseSaver):
         - <eval_id>
     """
 
+    def __init__(
+        self,
+        storage_dir: str,
+        config: Optional[StorageConfig] = None,
+    ):
+        super().__init__(storage_dir, config)
+        self._executor: Optional[ThreadPoolExecutor] = None
+        self._pending_futures: List[Future] = []
+        if self.config.async_saving:
+            self._executor = ThreadPoolExecutor(max_workers=1)
+
     def save_metadata(
         self,
         location: str,
@@ -28,7 +43,7 @@ class LocalStorage(BaseSaver):
         evaluator_name: Optional[str] = None,
         eval_name: Optional[str] = None,
     ):
-        """Create a MetaData object and save it as a json file"""
+        """Create a MetaData object and save it as a json file."""
         self.make_eval_id_and_timestamp(robot_type, eval_name)
         self.make_save_dir()
 
@@ -60,7 +75,51 @@ class LocalStorage(BaseSaver):
         return metadata_path
 
     def save_episode(self, i_episode: int, traj: TrajData):
-        """Pickle ``traj`` to ``traj_{i_episode}.pkl``."""
+        """Pickle ``traj`` to ``traj_{i_episode}.pkl``.
+
+        When ``config.async_saving`` is True the write is offloaded to a
+        background thread so the eval loop is not blocked by disk I/O.
+        """
         file_path = os.path.join(self.run_dir, f"traj_{i_episode}.pkl")
-        traj.save(file_path)
+        if self.config.async_saving:
+            future = self._executor.submit(self._do_save, file_path, traj)
+            self._pending_futures.append(future)
+        else:
+            self._do_save(file_path, traj)
         return file_path
+
+    def _do_save(self, file_path: str, traj: TrajData):
+        """Perform the actual (possibly optimized) pickle write."""
+        traj.save(
+            file_path,
+            compress_images=self.config.compress_images,
+            image_quality=self.config.image_quality,
+            stack_arrays=self.config.stack_arrays,
+            compress_pickle=self.config.compress_pickle,
+            use_highest_pickle_protocol=self.config.use_highest_pickle_protocol,
+        )
+
+    def flush(self):
+        """Block until every queued background save has finished.
+
+        Re-raises the first exception from any failed save.
+        """
+        errors = []
+        for future in self._pending_futures:
+            try:
+                future.result()
+            except Exception as e:
+                logger.error(f"Background save failed: {e}")
+                errors.append(e)
+        self._pending_futures.clear()
+        if errors:
+            raise errors[0]
+
+    def __del__(self):
+        try:
+            self.flush()
+        except Exception:
+            pass
+        if self._executor is not None:
+            self._executor.shutdown(wait=False)
+            self._executor = None

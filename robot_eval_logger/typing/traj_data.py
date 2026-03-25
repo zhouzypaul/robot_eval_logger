@@ -1,8 +1,20 @@
+import io
 import pickle
 from dataclasses import dataclass, fields
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+
+_LZ4_MAGIC = b"\x04\x22\x4d\x18"
+
+_NUMERIC_STEP_FIELDS = (
+    "action",
+    "joint_position",
+    "joint_velocity",
+    "end_effector_pose",
+    "gripper",
+    "joint_effort",
+)
 
 
 @dataclass
@@ -66,17 +78,112 @@ class TrajData:
         for key, value in kwargs.items():
             setattr(self, key, value)
 
-    def save(self, file_path: str) -> None:
-        with open(file_path, "wb") as file:
-            pickle.dump(self, file)
+    def save(
+        self,
+        file_path: str,
+        *,
+        compress_images: bool = False,
+        image_quality: int = 90,
+        stack_arrays: bool = False,
+        compress_pickle: bool = False,
+        use_highest_pickle_protocol: bool = False,
+    ) -> None:
+        """Serialize this trajectory to *file_path* with optional optimizations"""
+        save_obj = self
+        if compress_images or stack_arrays:
+            save_obj = self._prepare_for_save(
+                compress_images, image_quality, stack_arrays
+            )
+
+        protocol = (
+            pickle.HIGHEST_PROTOCOL
+            if use_highest_pickle_protocol
+            else pickle.DEFAULT_PROTOCOL
+        )
+
+        if compress_pickle:
+            import lz4.frame
+
+            data = pickle.dumps(save_obj, protocol=protocol)
+            with open(file_path, "wb") as f:
+                f.write(lz4.frame.compress(data))
+        else:
+            with open(file_path, "wb") as f:
+                pickle.dump(save_obj, f, protocol=protocol)
+
+    def _prepare_for_save(
+        self, compress_images: bool, image_quality: int, stack_arrays: bool
+    ) -> "TrajData":
+        """Return a lightweight copy with images JPEG-encoded and/or arrays stacked."""
+        data = self.to_dict()
+
+        if compress_images and "obs" in data and data["obs"] is not None:
+            data["obs"] = _encode_obs_images(data["obs"], image_quality)
+
+        if stack_arrays:
+            for name in _NUMERIC_STEP_FIELDS:
+                val = data.get(name)
+                if isinstance(val, list) and len(val) > 0:
+                    try:
+                        data[name] = np.stack(val)
+                    except (ValueError, TypeError):
+                        pass
+
+        return TrajData(**data)
 
     def to_dict(self) -> Dict[str, Any]:
         return {k: getattr(self, k) for k in self.__dict__.keys()}
 
     @staticmethod
     def load(file_path: str) -> "TrajData":
-        with open(file_path, "rb") as file:
-            return pickle.load(file)
+        """Load a trajectory pickle, auto-detecting lz4 compression."""
+        with open(file_path, "rb") as f:
+            header = f.read(4)
+            f.seek(0)
+            if header == _LZ4_MAGIC:
+                import lz4.frame
+
+                return pickle.loads(lz4.frame.decompress(f.read()))
+            return pickle.load(f)
+
+    @staticmethod
+    def decode_images(
+        obs: Dict[str, list],
+    ) -> Dict[str, List[np.ndarray]]:
+        """Decode JPEG-encoded obs images back to numpy arrays.
+
+        Accepts a mixed dict — entries that are already ``np.ndarray`` are
+        passed through unchanged, so this is safe to call unconditionally.
+        """
+        from PIL import Image
+
+        decoded: Dict[str, List[np.ndarray]] = {}
+        for cam, img_list in obs.items():
+            decoded[cam] = [
+                np.asarray(Image.open(io.BytesIO(img)))
+                if isinstance(img, bytes)
+                else img
+                for img in img_list
+            ]
+        return decoded
+
+
+def _encode_obs_images(obs: Dict[str, list], quality: int = 85) -> Dict[str, list]:
+    """JPEG-encode each image array in *obs*, returning ``bytes`` blobs."""
+    from PIL import Image
+
+    encoded: Dict[str, list] = {}
+    for cam_name, img_list in obs.items():
+        out = []
+        for img in img_list:
+            if isinstance(img, np.ndarray):
+                buf = io.BytesIO()
+                Image.fromarray(img).save(buf, format="JPEG", quality=quality)
+                out.append(buf.getvalue())
+            else:
+                out.append(img)
+        encoded[cam_name] = out
+    return encoded
 
 
 def _transpose_dicts_per_timestep(dicts: List[Dict[str, Any]]) -> Dict[str, List[Any]]:
@@ -106,6 +213,7 @@ def step_data_sequence_to_traj_data(steps: List[StepData]) -> TrajData:
 
 
 def main():
+    # for testing TrajData class
     obs_images = {
         f"camera{i}": np.random.randint(0, 256, (256, 256, 3), dtype=np.uint8)
         for i in range(1, 4)

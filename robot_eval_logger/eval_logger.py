@@ -79,13 +79,21 @@ class EvalLogger:
                 self._time_logging_thread.join(timeout=1.0)
             self._time_logging_thread = None
 
-    def __del__(self):
-        """Clean up the time logging thread when the logger is destroyed and log any remaining frames"""
-        try:
-            # First, log any remaining frames that haven't been logged yet
-            self._visualize_remaining_frames()
+    def flush(self):
+        """Wait for all pending async saves/uploads to complete.
 
-            # Then stop the time logging thread
+        Safe to call multiple times.  Call this before exiting to ensure
+        no trajectory data is lost when ``StorageConfig.async_saving``
+        or ``StorageConfig.batch_hf_uploads`` are enabled.
+        """
+        if self.data_saver is not None:
+            self.data_saver.flush()
+
+    def __del__(self):
+        """Clean up the time logging & saving thread when the logger is destroyed and log any remaining frames"""
+        try:
+            self._visualize_remaining_frames()
+            self.flush()
             self.stop_time_logging()
         except Exception as e:
             print(f"Error in EvalLogger.__del__: {e}")

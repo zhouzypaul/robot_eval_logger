@@ -10,5 +10,7 @@ setup(
         "moviepy==1.0.3",
         "huggingface-hub",
         "numpy<2.0.0",
+        "lz4",
+        "Pillow",
     ],
 )

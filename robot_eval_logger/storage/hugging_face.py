@@ -1,38 +1,53 @@
 """
-Eval data is always first saved locally, and then uploaded to hf
+Eval data is always first saved locally, and then uploaded to HF.
 """
 import logging
 import os
 import time
-from typing import Optional, Union
+from typing import List, Optional, Tuple, Union
 
-from huggingface_hub import HfApi
+from huggingface_hub import CommitOperationAdd, HfApi
 from huggingface_hub.errors import HfHubHTTPError, RepositoryNotFoundError
 
+from robot_eval_logger.storage.base_saver import StorageConfig
 from robot_eval_logger.storage.local import LocalStorage
 from robot_eval_logger.typing import *
 
-# Set up logging
 logger = logging.getLogger(__name__)
 
 
 class HuggingFaceStorage(LocalStorage):
-    """
-    Stores the trajectory data and the metadata to Hugging Face
-    Data is stored under eval_id/ folders in the Hugging Face repository.
+    """Stores trajectory data and metadata to Hugging Face.
+
+    Data is first written locally (benefiting from all :class:`LocalStorage`
+    optimizations), then uploaded to a HF dataset repository.
+
+    When ``StorageConfig.batch_hf_uploads`` is True (default), episode files are
+    queued and committed to HuggingFace in a single API call during ``flush()``.
+    This replaces N HTTP round-trips with one, dramatically reducing upload
+    overhead for multi-episode evals.
     """
 
-    def __init__(self, storage_dir: str, repo_id: str, hf_dir_name: str = "eval_data"):
+    def __init__(
+        self,
+        storage_dir: str,
+        repo_id: str,
+        hf_dir_name: str = "eval_data",
+        config: Optional[StorageConfig] = None,
+    ):
         """
         Args:
             storage_dir (str): Directory where the data is stored locally
             repo_id (str): Hugging Face repository ID
             hf_dir_name (str, optional): Directory name in the Hugging Face repository
+            config (StorageConfig, optional): Storage optimizations configs
         """
-        super().__init__(storage_dir)
+        super().__init__(storage_dir, config)
         self.repo_id = repo_id
         self.hf_dir_name = hf_dir_name
         self.api = HfApi()
+        # (local_path, repo_path, episode_index) tuples queued for batch upload
+        self._pending_hf_uploads: List[Tuple[str, str, int]] = []
 
     def _upload_to_hf(
         self,
@@ -86,6 +101,55 @@ class HuggingFaceStorage(LocalStorage):
         )
         return False
 
+    def _batch_upload_to_hf(self, max_retries: int = 3) -> bool:
+        """Commit all queued episode files in one HF API call.
+        Falls back to individual uploads on failure.
+
+        Returns:
+            bool: True if upload was successful, False otherwise
+        """
+        if not self._pending_hf_uploads:
+            return True
+
+        operations = [
+            CommitOperationAdd(path_in_repo=repo_path, path_or_fileobj=local_path)
+            for local_path, repo_path, _ in self._pending_hf_uploads
+        ]
+        n = len(operations)
+        retry_count = 0
+        while retry_count < max_retries:
+            try:
+                self.api.create_commit(
+                    repo_id=self.repo_id,
+                    repo_type="dataset",
+                    operations=operations,
+                    commit_message=f"Upload {n} episodes",
+                )
+                logger.info(f"Batch-uploaded {n} episodes to HuggingFace")
+                return True
+            except (
+                HfHubHTTPError,
+                RepositoryNotFoundError,
+                ConnectionError,
+                TimeoutError,
+            ) as e:
+                retry_count += 1
+                wait_time = 2**retry_count
+                logger.warning(
+                    f"Batch upload failed (attempt {retry_count}/{max_retries}): {e}"
+                )
+                time.sleep(wait_time)
+            except Exception as e:
+                logger.error(f"Unexpected batch upload error: {e}")
+                break
+
+        logger.warning("Batch upload failed; falling back to individual uploads")
+        all_ok = True
+        for local_path, repo_path, i_ep in self._pending_hf_uploads:
+            ok = self._upload_to_hf(local_path, repo_path, f"Upload episode {i_ep}")
+            all_ok = all_ok and ok
+        return all_ok
+
     def save_metadata(
         self,
         location: str,
@@ -96,7 +160,7 @@ class HuggingFaceStorage(LocalStorage):
         evaluator_name: Optional[str] = None,
         eval_name: Optional[str] = None,
     ):
-        """Create a MetaData object and save it to Hugging Face"""
+        """Save metadata locally and upload to HuggingFace immediately."""
         metadata_path = super().save_metadata(
             location=location,
             robot_name=robot_name,
@@ -107,7 +171,6 @@ class HuggingFaceStorage(LocalStorage):
             eval_name=eval_name,
         )
 
-        # Save metadata to Hugging Face
         path_in_repo = os.path.join(
             self.hf_dir_name, os.path.relpath(metadata_path, self.storage_dir)
         )
@@ -119,28 +182,55 @@ class HuggingFaceStorage(LocalStorage):
 
         if not success:
             logger.warning(
-                f"Failed to upload metadata to Hugging Face, but data was saved locally at: {metadata_path}"
+                "Failed to upload metadata to HuggingFace, "
+                f"but data was saved locally at: {metadata_path}"
             )
 
         return metadata_path
 
     def save_episode(self, i_episode: int, traj: TrajData):
-        """Save ``traj`` locally then upload to Hugging Face."""
-        traj_path = super().save_episode(i_episode, traj)
+        """Save ``traj`` locally, then upload (or queue) for HuggingFace.
 
-        # Upload to Hugging Face with error handling
+        When ``config.batch_hf_uploads`` is True the upload is deferred to
+        ``flush()``.
+        """
+        file_path = os.path.join(self.run_dir, f"traj_{i_episode}.pkl")
         path_in_repo = os.path.join(
-            self.hf_dir_name, os.path.relpath(traj_path, self.storage_dir)
-        )
-        upload_success = self._upload_to_hf(
-            file_path=traj_path,
-            path_in_repo=path_in_repo,
-            commit_message=f"Upload episode {i_episode}",
+            self.hf_dir_name, os.path.relpath(file_path, self.storage_dir)
         )
 
-        if not upload_success:
+        if self.config.batch_hf_uploads:
+            # save locally but don't upload to hf yet
+            super().save_episode(i_episode, traj)
+            self._pending_hf_uploads.append((file_path, path_in_repo, i_episode))
+        else:
+            # save locally and upload to hf
+            if self.config.async_saving:
+                future = self._executor.submit(
+                    self._save_and_upload, file_path, traj, path_in_repo, i_episode
+                )
+                self._pending_futures.append(future)
+            else:
+                self._save_and_upload(file_path, traj, path_in_repo, i_episode)
+
+        return file_path
+
+    def _save_and_upload(
+        self, file_path: str, traj: TrajData, path_in_repo: str, i_episode: int
+    ):
+        """Write locally then upload to HF (used when not batching)."""
+        self._do_save(file_path, traj)
+        ok = self._upload_to_hf(file_path, path_in_repo, f"Upload episode {i_episode}")
+        if not ok:
             logger.warning(
-                f"Failed to upload episode {i_episode} to Hugging Face, but data was saved locally at: {traj_path}"
+                f"Failed to upload episode {i_episode} to HuggingFace, "
+                f"but data was saved locally at: {file_path}"
             )
 
-        return traj_path
+    def flush(self):
+        """Finish all pending local saves, then batch-upload to HuggingFace."""
+        super().flush()
+
+        if self.config.batch_hf_uploads and self._pending_hf_uploads:
+            self._batch_upload_to_hf()
+            self._pending_hf_uploads.clear()
