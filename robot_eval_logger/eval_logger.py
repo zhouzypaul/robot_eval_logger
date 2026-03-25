@@ -1,12 +1,12 @@
 import time
 from datetime import datetime
-from threading import Event, Thread, current_thread
 from typing import Dict, Optional, Union
 
 import numpy as np
 import wandb
 
 from robot_eval_logger.storage import BaseSaver, LocalStorage
+from robot_eval_logger.time import TimeLogger
 from robot_eval_logger.typing import *
 
 
@@ -34,16 +34,9 @@ class EvalLogger:
         self.wandb_logger = wandb_logger
         self.frames_visualizer = frames_visualizer
         self.data_saver = data_saver
-        self.log_step_stats_interval_minutes = log_step_stats_interval_minutes
 
         self.past_success_rates = {}  # prefix --> list of success data points
         self.metadata_saved = False
-
-        # step tracking
-        self.total_steps = 0
-        self.steps_since_last_log = 0
-        self.time_elapsed = 0.0
-        self.last_log_time = None
 
         # episode tracking
         self.current_episode = 0
@@ -51,33 +44,21 @@ class EvalLogger:
         self._episode_wall_start: Optional[float] = None
         self._step_input_check_passed = False
 
-        # set up periodic logging
-        # TODO(zhouzypaul): make this into a separate class the logger can take in instead
-        if self.wandb_logger is not None:
-            self._time_logging = Event()
-            self._time_logging_thread = None
-            if log_step_stats_interval_minutes is not None:
-                self._start_time_logging_thread()
-
-    def _start_time_logging_thread(self):
-        """Start the time logging in a background thread"""
-        if self._time_logging_thread is None:
-            self._time_logging.clear()
-            self._time_logging_thread = Thread(
-                target=self._periodic_logging, daemon=True
+        # periodic step-throughput logging
+        self._time_logger: Optional[TimeLogger] = None
+        if (
+            self.wandb_logger is not None
+            and log_step_stats_interval_minutes is not None
+        ):
+            self._time_logger = TimeLogger(
+                wandb_logger, log_step_stats_interval_minutes
             )
-            self._time_logging_thread.start()
+            self._time_logger.start()
 
     def stop_time_logging(self):
-        """Safely stop the time logging thread"""
-        if (
-            self._time_logging_thread is not None
-            and self._time_logging_thread.is_alive()
-        ):
-            self._time_logging.set()
-            if self._time_logging_thread != current_thread():
-                self._time_logging_thread.join(timeout=1.0)
-            self._time_logging_thread = None
+        """Safely stop the time logging thread."""
+        if self._time_logger is not None:
+            self._time_logger.stop()
 
     def flush(self):
         """Wait for all pending async saves/uploads to complete.
@@ -115,62 +96,6 @@ class EvalLogger:
         # Push to wandb if there's anything to log
         if frames_viz and self.wandb_logger is not None:
             self.wandb_logger.log({**frames_viz, "num_episode": final_episode_index})
-
-    def _periodic_logging(self):
-        """Background thread that periodically logs time-related stats"""
-        while not self._time_logging.is_set():
-            try:
-                self.log_time_related_stats()
-            except Exception as e:
-                print(f"Error in periodic logging: {e}")
-                # if we hit a logging error, stop the thread
-                break
-            # sleep for the interval, but also check if we should stop
-            self._time_logging.wait(timeout=self.log_step_stats_interval_minutes * 60)
-
-        # make sure thread is marked as stopped
-        self._time_logging_thread = None
-
-    def log_time_related_stats(self):
-        """Log time-related statistics to wandb"""
-        if self.wandb_logger is None:
-            return
-
-        try:
-            current_time = time.time()
-
-            # initialize last_log_time if not set
-            if self.last_log_time is None:
-                self.last_log_time = current_time
-                return
-
-            # calculate elapsed time and stats
-            minutes_elapsed = (current_time - self.last_log_time) / 60.0
-            self.time_elapsed += minutes_elapsed
-
-            # calculate steps per minute in the last interval
-            steps_per_minute = (
-                self.steps_since_last_log / minutes_elapsed
-                if minutes_elapsed > 0
-                else 0
-            )
-
-            # change the x-axis on wandb
-            wandb.define_metric("step_stats/*", step_metric="total_time_elapsed")
-            self.wandb_logger.log(
-                {
-                    "step_stats/total_eval_steps": self.total_steps,
-                    "step_stats/eval_steps_per_minute": steps_per_minute,
-                    "total_time_elapsed": self.time_elapsed,
-                }
-            )
-
-            # reset tracking variables
-            self.last_log_time = current_time
-            self.steps_since_last_log = 0
-        except Exception as e:
-            print(f"Error logging time-related stats: {e}")
-            raise  # re-raise to stop the thread if needed
 
     def log_episode(
         self,
@@ -321,8 +246,8 @@ class EvalLogger:
 
         if not self._current_episode_steps:
             self._episode_wall_start = time.time()
-        self.total_steps += 1
-        self.steps_since_last_log += 1
+        if self._time_logger is not None:
+            self._time_logger.record_step()
         self._current_episode_steps.append(
             StepData(
                 obs=obs,
