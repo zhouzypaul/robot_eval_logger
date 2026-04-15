@@ -7,6 +7,7 @@ from typing import Optional
 
 class RobotType(Enum):
     FRANKA = "franka"
+    OPENARM = "openarm"
     WIDOWX = "widowx"
 
 
