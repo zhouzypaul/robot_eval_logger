@@ -47,12 +47,12 @@ class EvalID:
 @dataclass
 class MetaData:
     eval_id: EvalID
-    location: str
     robot_name: str
     robot_type: RobotType
     control_mode: ControlMode
     action_frequency_hz: float
     time: TimeStamp
+    location: Optional[str] = None
     evaluator_name: Optional[str] = None
     eval_name: Optional[str] = None
 
@@ -97,7 +97,7 @@ class MetaData:
             action_frequency_hz = float(data["action_frequency_hz"])
             return cls(
                 eval_id=eval_id,
-                location=data["location"],
+                location=data.get("location"),
                 robot_name=data["robot_name"],
                 robot_type=robot_type,
                 control_mode=control_mode,
@@ -122,7 +122,6 @@ def main():
     eval_id = EvalID.create(time_stamp, RobotType.FRANKA)
     metadata = MetaData(
         eval_id=eval_id,
-        location="Test Location",
         robot_name="Test Robot",
         robot_type=RobotType.FRANKA,
         control_mode=ControlMode.JOINT_POSITION,

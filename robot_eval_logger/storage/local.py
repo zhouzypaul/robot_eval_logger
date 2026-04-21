@@ -35,11 +35,11 @@ class LocalStorage(BaseSaver):
 
     def save_metadata(
         self,
-        location: str,
         robot_name: str,
         robot_type: str,
         control_mode: Union[str, ControlMode],
         action_frequency_hz: float,
+        location: Optional[str] = None,
         evaluator_name: Optional[str] = None,
         eval_name: Optional[str] = None,
     ):
